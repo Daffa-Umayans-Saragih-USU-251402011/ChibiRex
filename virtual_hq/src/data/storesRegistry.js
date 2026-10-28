@@ -1,0 +1,100 @@
+/**
+ * storesRegistry.js — Daftar 80 toko Bibitor (nomor, kota, SKU aktif) dari chibirex.duckdb.
+ * Hanya dipakai kalau API tidak terjangkau; saat online, StoreContext memakai GET /jaringan/ringkasan (Health Score,
+ * SKU perlu reorder, dan lainnya per tanggal simulasi). Health Score sengaja tidak disimpan di sini karena berubah
+ * mengikuti tanggal simulasi dan tindakan agent.
+ */
+
+export const STORES_MASTER_REGISTRY = [
+    { id: 1, city: 'HARDERSFIELD', skuCount: 4223 },
+    { id: 2, city: 'ASHBORNE', skuCount: 3223 },
+    { id: 3, city: 'HORNSEY', skuCount: 540 },
+    { id: 4, city: 'EANVERNESS', skuCount: 3364 },
+    { id: 5, city: 'SUTTON', skuCount: 1713 },
+    { id: 6, city: 'GOULCREST', skuCount: 4103 },
+    { id: 7, city: 'STANMORE', skuCount: 4040 },
+    { id: 8, city: 'ALNERWICK', skuCount: 2919 },
+    { id: 9, city: 'BLACKPOOL', skuCount: 2974 },
+    { id: 10, city: 'HORNSEY', skuCount: 4623 },
+    { id: 11, city: 'CARDEND', skuCount: 3309 },
+    { id: 12, city: 'LEESIDE', skuCount: 2299 },
+    { id: 13, city: 'TARMSWORTH', skuCount: 1639 },
+    { id: 14, city: 'BROMWICH', skuCount: 3113 },
+    { id: 15, city: 'WANBORNE', skuCount: 5180 },
+    { id: 16, city: 'LUNDY', skuCount: 1518 },
+    { id: 17, city: 'OLDHAM', skuCount: 1950 },
+    { id: 18, city: 'FURNESS', skuCount: 1728 },
+    { id: 19, city: 'WINTERVALE', skuCount: 3133 },
+    { id: 20, city: 'BREDWARDINE', skuCount: 2648 },
+    { id: 21, city: 'BALERNO', skuCount: 4005 },
+    { id: 22, city: 'SHARNWICK', skuCount: 2840 },
+    { id: 23, city: 'ARBINGTON', skuCount: 5132 },
+    { id: 24, city: 'PALPERROTH', skuCount: 1971 },
+    { id: 25, city: 'CAERSHIRE', skuCount: 3446 },
+    { id: 26, city: "KNIFE'S EDGE", skuCount: 1519 },
+    { id: 27, city: 'MOUNTMEND', skuCount: 2435 },
+    { id: 28, city: 'LARNWICK', skuCount: 1232 },
+    { id: 29, city: 'AYLESBURY', skuCount: 1515 },
+    { id: 30, city: 'CULCHETH', skuCount: 3457 },
+    { id: 31, city: 'HORNSEY', skuCount: 2274 },
+    { id: 32, city: 'MOUNTMEND', skuCount: 3747 },
+    { id: 33, city: 'HORNSEY', skuCount: 4946 },
+    { id: 34, city: 'PITMERDEN', skuCount: 7915 },
+    { id: 35, city: 'HALIVAARA', skuCount: 2105 },
+    { id: 36, city: 'LEWES', skuCount: 1709 },
+    { id: 37, city: 'PAETHSMOUTH', skuCount: 2035 },
+    { id: 38, city: 'GOULCREST', skuCount: 6453 },
+    { id: 39, city: 'EASTHALLOW', skuCount: 2655 },
+    { id: 40, city: 'BULLMAR', skuCount: 2100 },
+    { id: 41, city: 'LARNWICK', skuCount: 5127 },
+    { id: 42, city: 'BLACK HOLLOW', skuCount: 3376 },
+    { id: 43, city: 'WOLFORD', skuCount: 1792 },
+    { id: 44, city: 'PORTHCRAWL', skuCount: 3978 },
+    { id: 45, city: 'VERITAS', skuCount: 1489 },
+    { id: 46, city: 'TYWARDREATH', skuCount: 3600 },
+    { id: 47, city: "PELLA'S WISH", skuCount: 2631 },
+    { id: 48, city: 'NORFOLK', skuCount: 2675 },
+    { id: 49, city: 'GARIGILL', skuCount: 4814 },
+    { id: 50, city: 'MOUNTMEND', skuCount: 7842 },
+    { id: 51, city: 'ABERDEEN', skuCount: 2338 },
+    { id: 52, city: 'GRAYCOTT', skuCount: 2056 },
+    { id: 53, city: 'HILLFAR', skuCount: 2230 },
+    { id: 54, city: 'GUTHRAM', skuCount: 3787 },
+    { id: 55, city: 'DRY GULCH', skuCount: 6001 },
+    { id: 56, city: "BEGGAR'S HOLE", skuCount: 3482 },
+    { id: 57, city: 'LANTEGLOS', skuCount: 1963 },
+    { id: 58, city: 'HARTLEPOOL', skuCount: 2067 },
+    { id: 59, city: 'CLAETHORPES', skuCount: 3241 },
+    { id: 60, city: 'IRRAGIN', skuCount: 5190 },
+    { id: 61, city: 'AETHELNEY', skuCount: 3477 },
+    { id: 62, city: 'KILMARNOCK', skuCount: 2262 },
+    { id: 63, city: 'SWORDBREAK', skuCount: 2006 },
+    { id: 64, city: 'CESTERFIELD', skuCount: 4035 },
+    { id: 65, city: 'LUTON', skuCount: 1704 },
+    { id: 66, city: 'EANVERNESS', skuCount: 6707 },
+    { id: 67, city: 'EANVERNESS', skuCount: 6816 },
+    { id: 68, city: 'SOLARIS', skuCount: 4627 },
+    { id: 69, city: 'MOUNTMEND', skuCount: 7163 },
+    { id: 70, city: 'KELD', skuCount: 2372 },
+    { id: 71, city: 'CLARCTON', skuCount: 3506 },
+    { id: 72, city: 'HARDERSFIELD', skuCount: 2516 },
+    { id: 73, city: 'DONCASTER', skuCount: 6937 },
+    { id: 74, city: 'PAENTMARWY', skuCount: 5537 },
+    { id: 75, city: 'BARNCOMBE', skuCount: 2472 },
+    { id: 76, city: 'DONCASTER', skuCount: 6806 },
+    { id: 77, city: 'TAMWORTH', skuCount: 2938 },
+    { id: 78, city: 'EASTHAVEN', skuCount: 1991 },
+    { id: 79, city: 'BALLYMENA', skuCount: 4381 },
+    { id: 81, city: 'PEMBROKE', skuCount: 3678 },
+];
+
+/** Toko default saat aplikasi pertama kali dimuat (toko demo dashboard) */
+export const DEFAULT_STORE = STORES_MASTER_REGISTRY.find((s) => s.id === 74) || STORES_MASTER_REGISTRY[0];
+
+/** Helper untuk format nama tampilan lengkap */
+export function formatStoreName(store) {
+    if (!store) return 'Toko 74 - PAENTMARWY';
+    const id = store.id || store.store;
+    const city = store.city || store.kota || 'UNKNOWN';
+    return `Toko ${id} - ${city}`;
+}

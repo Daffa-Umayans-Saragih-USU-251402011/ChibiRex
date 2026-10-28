@@ -1,0 +1,168 @@
+# Kontrak API untuk Dashboard Rexa
+
+Panduan menyambungkan dashboard React (`dashboard/`) ke API backend (`api/`). Semua angka, status, dan aksi di dashboard harus berasal dari API ini, bukan dari `src/data/mockData.js`, supaya demo final memperlihatkan agent yang benar-benar bekerja.
+
+Dokumentasi interaktif semua endpoint (bisa dicoba langsung): http://127.0.0.1:8000/docs
+
+## Menjalankan untuk pengembangan
+
+Terminal 1, dari root repo (butuh `.venv` dan `python -m engine.pipeline` yang sudah pernah dijalankan):
+
+```powershell
+uvicorn api.main:app
+```
+
+Terminal 2:
+
+```powershell
+cd dashboard
+npm install
+npm run dev
+```
+
+- Simpan alamat API di `dashboard/.env.local` (tidak ikut di-commit): `VITE_API_URL=http://127.0.0.1:8000`, lalu baca dengan `import.meta.env.VITE_API_URL`.
+- CORS sudah mengizinkan `http://localhost:5173` dan `http://127.0.0.1:5173`. Origin lain ditambahkan lewat env `CHIBIREX_CORS_ORIGINS` di backend.
+- Tombol "Jalankan agent" butuh API di port 8000 dan LLM sesuai `.env`: Claude di Amazon Bedrock (`CHIBIREX_LLM_PROVIDER=bedrock` + `AWS_BEARER_TOKEN_BEDROCK`) atau Ollama `qwen3:14b` yang sedang berjalan.
+
+## Yang sudah tersambung (jangan dikerjakan ulang)
+
+Per 24 Okt 2026 **semua** bagian dashboard memakai data API; tidak ada lagi data contoh (`src/data/` sudah dihapus). Diuji di browser terhadap API lokal.
+
+- **`src/lib/api.js`**: klien untuk semua endpoint di dokumen ini (`api.ringkasan(store)`, `api.daftarSku(...)`, `api.holds(store)`, dan seterusnya). Pakai klien ini untuk semua panggilan API; jangan memakai `fetch` langsung. Galat dilempar sebagai `ApiError` dengan `message` yang siap ditampilkan. Format angka, Rupiah, dan tanggal ada di `src/lib/format.js`.
+- **`src/lib/useDataToko.js`**: memuat semua data satu toko (ringkasan, SKU REORDER, PO, hold, realokasi, status guardrail, hitung fisik) sekali di `DashboardApp`, lalu dibagikan ke kartu lewat props. Baris tabel Smart Reorder sudah digabung dengan PO dan Hold lewat `inventory_id`. Dimuat ulang setiap toko atau `refreshKey` berubah; setelah ada aksi yang mengubah data, panggil `muatUlang()`.
+- **`src/lib/skenario.js`**: skenario Runaway PO dan selisih stok untuk menu "Skenario Uji" di `Header`.
+- **Chatbot Copilot**: `AiCopilotWidget` mengirim `POST {VITE_COPILOT_URL}/tanya` body `{"store": 74, "pertanyaan": "...", "riwayat": [{"peran": "user"|"assistant", "teks": "..."}]}` ke Lambda `rexa-copilot` (folder `copilot/`). Jawaban `{"jawaban", "model", "alat", "token_input", "token_output"}` berasal dari Claude Haiku 4.5 di Bedrock yang membaca API ini dengan tool baca saja. Kalau `VITE_COPILOT_URL` kosong atau Copilot gagal, jawaban cepat dihitung dari data dashboard (`src/lib/copilot.js`).
+- **`JaringanToko`** (menu "Semua Toko", sejak 25 Okt): statistik semua toko tanpa berpindah toko (KPI jaringan, grafik Health Score 80 toko, tabel yang bisa diurutkan dan dicari, peluang transfer stok) dan **Agent Jaringan** (lihat bagian di bawah). Klik toko di grafik, tabel, atau laporan agent membuka dashboard toko itu.
+- **Virtual HQ** (`virtual_hq/`, game Phaser): memakai endpoint yang sama lewat `virtual_hq/src/lib/api.js` (alamat dari `VITE_API_URL`, default `http://localhost:8000`). Peta NPC ke endpoint ada di `virtual_hq/README.md`. Di Amplify, game dipasang di `/hq/` pada domain dashboard; tombol **Mode Virtual HQ** di `Sidebar` membuka `/hq/index.html?store=<toko>` (`VIRTUAL_HQ_URL` di `src/lib/api.js`), dan tombol **Dashboard** di game kembali ke `/?store=<toko>` (dashboard membaca `?store=` saat dibuka). Dari halaman Semua Toko, tombol yang sama (dan **Buka di Virtual HQ** di `JaringanToko`) membuka mode Semua Toko (`/hq/index.html?mode=jaringan`); kembalinya ke `/?tab=jaringan`. Laporan Agent Jaringan terakhir (`rexa.laporanJaringan.v1` di localStorage) dipakai bersama dashboard dan game. Jangan menambahkan angka tetap atau fallback yang pura-pura sukses di game; kalau API gagal, tampilkan galatnya.
+- **`AgentRunPanel`**, **`PendingPoCard`**, **`PoApprovalModal`**: panel agent, draf PO, dan 1-Click Approval (sejak 20 Okt).
+- **`Header`** (pilihan toko, level otonomi, Skenario Uji, status API), **`Sidebar`** (badge dari ringkasan dan status breaker), **`TopKeyMetricsRow`**, **`KpiGrid`**, **`ExplorationBudgetCard`**, **`CapitalReallocationCard`**, **`SmartReorderTable`**, **`SuppressionDetailModal`**, **`GuardrailsModal`**, **`AiCopilotWidget`**.
+
+`HealthScoreCard`, `FormulaModal`, `ScenarioBar`, `AgenticPipelineVisualizer`, dan `OnboardingBanner` tidak dipakai di dashboard sekarang.
+
+## Aturan umum
+
+- **Data simulasi.** Data berasal dari Bibitor (studi kasus jaringan 80 toko minuman) per **31 Des 2016**, dengan nilai dalam Rupiah dari kurs tetap Rp16.000/USD. Tampilkan label "Data simulasi" dan keterangan sumber data (tabel di bawah). Produknya minuman (rum, vodka, wine), bukan kopi.
+- **Toko default demo: 74** (PAENTMARWY). SKU demo: Bacardi Gold Rum (draf PO) dan Ciroc Apple Vodka (Hold Reorder).
+- **Format galat:** galat bisnis berbentuk `{"detail": {"kode": "...", "pesan": "..."}}`. Tampilkan `pesan` ke pengguna. Galat validasi FastAPI (422) berbentuk `{"detail": [...]}`.
+- **Idempotency-Key** wajib untuk `POST /purchase-orders` dan `POST /holds` (pakai `crypto.randomUUID()`). Approve, reject, dan reset tidak membutuhkannya.
+- **Persetujuan selalu oleh manusia.** Kirim body `{"oleh": "<nama manajer>", "catatan": "..."}` untuk approve, reject, dan reset circuit breaker.
+- **Level 3 (PO otomatis) belum aktif.** Di proposal, Level 3 baru masuk Fase 3. Tampilkan sebagai "segera hadir" atau sembunyikan; jangan ada PO berstatus "Auto".
+
+## Peta komponen ke endpoint
+
+| Komponen | Endpoint | Field yang dipakai |
+|---|---|---|
+| `Header`: pilihan cabang | `GET /stores` | `store`, `kota`, `sku_aktif`, `perlu_reorder` |
+| `TopKeyMetricsRow` (kartu Inventory Health + rincian) | `GET /stores/{store}/ringkasan` | `health_score`, `komponen[]` (`nama`, `nilai`, `penjelasan`), `rumus`, `per_tanggal` |
+| `KpiGrid` | `GET /stores/{store}/ringkasan` | `modal_diselamatkan_idr`, `po_menunggu`, `nilai_po_menunggu_idr`, `sku_risiko_tinggi`, `modal_tertahan_idr`, `nilai_stok_idr` |
+| `ExplorationBudgetCard` | `GET /stores/{store}/ringkasan`, `GET /holds?store=` | `exploration_budget_idr`; per hold: `qty_uji`, `nilai_uji_idr`, `review_pada` |
+| `CapitalReallocationCard` | `GET /stores/{store}/reallocation` | `dana_tersedia_idr`, `sumber[]`, `tujuan[]` (`deskripsi`, `dialokasikan_idr`), `sisa_dana_idr`, `pesan` |
+| `SmartReorderTable` | `GET /sku?store=&status_stok=REORDER&limit=50`, `GET /purchase-orders?store=`, `GET /holds?store=` | lihat tabel field SKU di bawah; gabungkan status PO/hold lewat `inventory_id` |
+| `JaringanToko` (menu "Semua Toko") | `GET /jaringan/ringkasan`, `GET /jaringan/transfer?limit=20`, `POST {VITE_COPILOT_URL}/jaringan` | per toko: `health_score` + komponen (`ketersediaan`, `perputaran`, `stabilitas_kas`, 0-100), `perlu_reorder`, `overstock`, `deadstock`, `sku_risiko_tinggi`, `modal_tertahan_idr`, `po_menunggu`, `hold_aktif`; total jaringan dan `health_rata`. Transfer: `dari_toko`, `ke_toko`, `qty`, `nilai_idr` (PO yang bisa dihindari) |
+| `RekapAgent` (menu "Rekap Agent") | `GET /stores/{store}/rekap` | per hari simulasi (terbaru dulu): `run[]` (waktu nyata, status, model, token, ringkasan), `hold[]`, `po_dibuat[]` (status sekarang, pelanggaran), `po_disetujui[]`, `po_ditolak`; `total`. Tombol Unduh CSV (pemisah `;`) dan Cetak / Simpan PDF |
+| `PoApprovalModal` | `GET /purchase-orders/{po_id}`, `GET /purchase-orders/{po_id}/sap-payload`, `POST /purchase-orders/{po_id}/approve` atau `/reject` | `qty`, `nilai_idr`, `alasan` (penalaran agent), `pelanggaran[]`, `vendor_name`; setelah approve: `sap_po_number` |
+| `SuppressionDetailModal` | `GET /holds?store=`, `GET /sku/{id}/substitution` | `modal_diselamatkan_idr`, `alasan`, `qty_uji`; substitusi: `status`, `mitra[]` (`jenis`, `lift_alk`) |
+| `GuardrailsModal` | `GET /guardrails/status?store=`, `POST /guardrails/circuit-breaker/reset`, `GET /audit-log` | `circuit_breaker_terbuka`, `alasan`, `batas_po_harian_idr`, `total_po_hari_ini_idr` (hari simulasi ini), `outlier_sigma`, `data_confidence_min` |
+| `LogAktivitasBubble` (bubble melayang kiri atas, semua tab) | `GET /audit-log?limit=40` tiap 5 detik | satu baris per `aksi`: `agent_mulai` "Agent berjalan", `agent_selesai` "Agent berhasil" (`detail.langkah`), `agent_gagal` (termasuk tugas yang ditutup karena tidak diambil, `aktor: sistem`), `draft_purchase_order`, `po_approved`/`po_rejected`, `hold_reorder`, `circuit_breaker_terbuka`/`_reset`, `simulasi_*`, `reset_demo`. `waktu` dalam WIB (jam API, juga di Lambda) |
+| Panel agent (baru) | `POST /agent-runs/mulai`, `GET /agent-runs/{run_id}`, `GET /agent-runs` | lihat bagian "Menjalankan agent" |
+
+### Field SKU (`GET /sku`, `GET /sku/{inventory_id}`)
+
+| Di desain | Field API | Catatan |
+|---|---|---|
+| Nama produk, SKU, kategori | `deskripsi`, `inventory_id`, `jenis` / `kategori` | `jenis` misalnya RUM, VODKA |
+| Stok, batas ROP | `stok_akhir`, `reorder_point`, `perlu_reorder` | |
+| Skor kecepatan jual | `vs_tahun`, `tren_beli`, `arah_tren` | `arah_tren`: NAIK, TURUN, STABIL, TIDAK_ANDAL |
+| Prediksi habis | `tgl_perkiraan_habis`, `hari_cukup` | tanggal simulasi (2017) |
+| Keyakinan AI | `skor_risiko` (0-100), `level_risiko` | Confidence Score risiko stok habis: TINGGI ≥ 90, SEDANG ≥ 70. Ini peringkat, bukan persen; tulis "Skor risiko 96 (TINGGI)" |
+| Data Confidence | `data_confidence` | 0-1; di bawah 0,8 PO ditahan guardrail |
+| Saran PO | `saran_qty_po`, `nilai_saran_po_idr`, `vendor_name`, `lead_time_rata` | |
+
+Status di kolom aksi:
+- PO berstatus `DRAFT` → tombol "1-Click Approval".
+- PO berstatus `DITAHAN_GUARDRAIL` → tampilkan `pelanggaran[].pesan`.
+- Hold `AKTIF` → "Hold Reorder • cek alasan".
+- Selain itu → belum ditindak agent.
+
+## Menjalankan agent (sudah dipakai `AgentRunPanel`)
+
+Juri meminta loop agent terlihat jelas: **plan → reason → act → review**, dengan persetujuan manusia.
+
+1. `POST /agent-runs/mulai` dengan body `{"store": 74}`. Responsnya `202` dan berisi `run_id` dengan `status: "BERJALAN"` (mode lokal) atau `"MENUNGGU"` (mode antrian, sampai worker mengambilnya). Kalau agent masih berjalan, responsnya `409 AGENT_SEDANG_BERJALAN` dengan `detail.run_id` milik run yang sedang berjalan; panel langsung memantau run itu.
+   Kalau statusnya `MENUNGGU` dan `VITE_COPILOT_URL` diisi, `api.mulaiAgent` (dashboard dan Virtual HQ) langsung mengirim `POST {VITE_COPILOT_URL}/agent` body `{"run_id": "..."}` tanpa menunggu hasilnya: Lambda Copilot membangunkan agent di Bedrock AgentCore (`copilot/agentcore.py` → `agent/agentcore.py`), yang mengambil tugas dari antrian seperti worker laptop. Responsnya `202 {"status": "diterima"}`, `503 AGENTCORE_BELUM_ADA` (belum di-deploy; tugas menunggu worker laptop), atau `502 AGENTCORE_GAGAL`. Tugas yang tidak diambil dalam 60 detik ditutup GAGAL dengan penyebabnya.
+   `GET /agent-runs/worker` → `{mode, aktif, terakhir_terlihat, nama, agentcore}`: `agentcore: true` berarti agent sudah di Bedrock AgentCore (tampilkan "Agent berjalan di Amazon Bedrock AgentCore", jangan minta laptop dinyalakan); `nama` adalah pengambil tugas terakhir (`bedrock-agentcore` atau nama laptop).
+   Saat panel dibuka atau halaman di-refresh, `GET /agent-runs/aktif` mengembalikan run yang sedang MENUNGGU/BERJALAN (atau `null`). Daftar `GET /agent-runs` membawa `status` dan `pesan` (penyebab kalau GAGAL).
+2. Panggil `GET /agent-runs/{run_id}` setiap 1-2 detik. `langkah[]` bertambah setiap kali agent memanggil tool. Setiap langkah berisi `tool`, `input` (termasuk `alasan` dari agent), `output`, dan `detik`.
+3. Saat `status` menjadi `SELESAI`, tampilkan `jawaban` (ringkasan agent), lalu muat ulang ringkasan, tabel, dan daftar PO. Kalau `GAGAL`, tampilkan `pesan`.
+
+Saran pengelompokan langkah untuk tampilan:
+
+| Fase | Tool |
+|---|---|
+| PLAN | `list_prioritas` |
+| REASON | `get_sku_metrics`, `check_substitution` |
+| ACT | `hold_reorder`, `draft_purchase_order`, `suggest_reallocation` |
+| REVIEW | `output.pelanggaran` atau `output.ditolak` (guardrail menahan aksi), `jawaban` akhir, lalu PO menunggu approval manajer |
+
+Satu kali jalan butuh ±20 detik dengan Claude Sonnet 4.6 (±30-60 detik dengan Ollama lokal), jadi tampilkan langkah satu per satu selagi berjalan.
+
+## Semua toko dan Agent Jaringan (menu "Semua Toko")
+
+- `GET /jaringan/ringkasan`: statistik semua toko pada tanggal simulasi sekarang. Health Score per toko sama persis dengan `GET /stores/{store}/ringkasan`. Mensimulasikan 276 ribu SKU butuh ±1 detik, jadi hasilnya disimpan di tabel `cache_jaringan` per (hari simulasi, barang yang dipesan); PO dan hold selalu dibaca terbaru.
+- `GET /jaringan/transfer?limit=20`: merek yang perlu reorder di satu toko padahal toko lain OVERSTOCK/DEADSTOCK untuk merek yang sama. `qty` = min(saran PO toko tujuan, kelebihan toko asal); stok satu toko asal tidak dibagi melebihi kelebihannya. Hanya rekomendasi: jarak dan ongkos kirim belum dihitung, dan belum ada aksi transfer di backend.
+- `POST {VITE_COPILOT_URL}/jaringan` body `{"bahasa": "id"|"en"}`: Agent Jaringan (`copilot/jaringan.py`, Claude Sonnet 4.6 di Lambda `rexa-copilot`) membaca kedua endpoint di atas dan detail toko, lalu mengakhiri dengan tool `tetapkan_prioritas`. Jawaban: `ringkasan`, `toko[]` (3-5 toko, angka dari API + `alasan`, `tindakan`), `transfer[]` (dari daftar transfer + `alasan`), `langkah[]`, `model`, `token_input`, `token_output`, `durasi_dtk`, `per_tanggal`. Toko dan transfer yang tidak ada di data ditolak dan dikembalikan ke model. Biasanya 20-30 detik. Agent ini hanya membaca: PO tetap dibuat agent toko dan disetujui manajer. Laporan terakhir disimpan di `localStorage` browser (`rexa.laporanJaringan.v1`) dan diberi tanda kalau tanggal simulasinya sudah berbeda.
+
+## Jam simulasi (kontrol tanggal di `Header`)
+
+Data Bibitor berhenti di 31 Des 2016, jadi waktu dimajukan dari tanggal itu (`api/simulasi.py`). Setiap hari simulasi, stok setiap SKU berkurang sesuai permintaan harian dari data (acak tetapi sama untuk SKU dan hari yang sama), dan barang dari PO yang disetujui serta stok uji Hold Reorder tiba setelah lead time vendor. Status stok, prediksi habis, saran PO, Health Score, realokasi, dan prioritas agent ikut berubah.
+
+- `GET /simulasi` → `hari_ke`, `tanggal`, `otomatis`, `detik_per_hari`, `hari_maks` (90 hari).
+- `POST /simulasi/maju` body `{"hari": 1-30, "oleh": "..."}`: tombol "+1" dan "+7".
+- `POST /simulasi/mundur` body sama: tombol "−1" dan "−7" (paling awal 31 Des 2016). Stok kembali persis seperti pada tanggal itu karena permintaan harian simulasi selalu sama untuk hari yang sama; PO dan hold yang dibuat sesudahnya tetap tercatat dan jadwal tibanya tidak berubah.
+- `POST /simulasi/otomatis` body `{"aktif": true, "detik_per_hari": 10|30|60}`: satu hari simulasi tiap N detik nyata; `{"aktif": false}` untuk jeda. Tidak ada proses latar: hari dihitung dari waktu nyata sejak terakhir diatur.
+- Dashboard memeriksa `GET /simulasi` berkala (tiap ≤5 detik saat otomatis, 15 detik saat jeda) dan memuat ulang data setiap hari berganti.
+- Field baru: SKU `stok_dalam_pengiriman` (barang PO disetujui yang belum tiba; reorder memakai stok gudang + dalam pengiriman, jadi SKU yang sedang dikirim tidak dipesan ulang), PO `tgl_tiba`. `ringkasan.per_tanggal` = tanggal simulasi.
+- `POST /simulasi/kembali` body `{"oleh": "..."}`: tombol "Kembali ke 31 Des 2016". Tanggal dan stok kembali ke data awal tanpa menghapus PO, hold, jejak agent, atau audit log. Barang yang sudah tiba menjadi riwayat (PO tetap tercatat, `tgl_tiba` kosong); barang yang masih di jalan tetap tiba dengan sisa lead time yang sama; `review_pada` hold ikut mundur.
+- `GET /stores` tetap memakai data 31 Des 2016 (mensimulasikan 80 toko sekaligus terlalu berat).
+- `POST /demo/reset` (`python -m agent.reset_demo`) menghapus semua data demo **dan** mengembalikan jam ke 31 Des 2016.
+
+## Skenario selisih stok (menu "Skenario Uji" di `Header`)
+
+Mendemokan mitigasi inakurasi data: hasil hitung fisik (simulasi) yang berbeda dari stok sistem menurunkan Data Confidence, dan guardrail menahan PO sampai selisihnya diaudit.
+
+1. Ambil SKU target, misalnya SKU teratas dari `GET /stores/{store}/prioritas?limit_naik=1&limit_turun=0` (toko 74: Bacardi Gold Rum).
+2. `POST /sku/{inventory_id}/stok-fisik` dengan body `{"stok_fisik": round(stok_akhir × 0,75), "dicatat_oleh": "<nama manajer>", "catatan": "Simulasi stock opname"}`. Respons berisi `data_confidence_data` (sebelum), `data_confidence` (sesudah, misalnya 1,00 → 0,74), dan `perlu_audit`.
+3. Jalankan agent. Draf PO SKU itu akan berstatus `DITAHAN_GUARDRAIL` dengan kode `DATA_CONFIDENCE_RENDAH`; draf lama SKU itu juga ditolak saat approve (409).
+4. Tampilkan daftar yang menunggu audit dari `GET /stores/{store}/stok-fisik`, dengan tombol "Audit selesai" yang memanggil `DELETE /sku/{inventory_id}/stok-fisik?oleh=<nama manajer>` (204).
+
+Versi terminalnya: `python -m agent.skenario_selisih_stok --store 74`, lalu `--audit-selesai` di akhir demo.
+
+## Skenario uji Runaway PO (menu "Skenario Uji" di `Header`)
+
+Belum ada endpoint khusus. Skenario ini cukup berupa urutan panggilan API yang sama dengan `agent/skenario_runaway.py`:
+
+1. `GET /stores/{store}/prioritas?limit_naik=10&limit_turun=0`, lalu ambil SKU dari `naik`.
+2. Untuk 3 SKU: `POST /purchase-orders` dengan `qty = ceil(saran_qty_po × 18,5)` dan `dibuat_oleh: "skenario uji Runaway PO"`. Angka 18,5 adalah median lonjakan pesanan borongan di data Online Retail II. Hasilnya `DITAHAN_GUARDRAIL` (`OUTLIER_3SIGMA`).
+3. `GET /guardrails/status`: circuit breaker kini terbuka.
+4. Satu PO normal (tanpa `qty`) juga ditahan dengan kode `CIRCUIT_BREAKER`.
+5. Manajer menekan "Reset" (`POST /guardrails/circuit-breaker/reset`). Jangan reset otomatis, karena langkah ini adalah human-in-the-loop yang ingin ditunjukkan.
+
+## Aturan untuk perubahan berikutnya
+
+- Jangan menambah data tiruan atau KPI tanpa sumber. Angka yang belum ada di API dicatat sebagai kebutuhan endpoint baru.
+- Klaim arsitektur yang benar: Strands Agents (di Amazon Bedrock AgentCore Runtime setelah `deploy\deploy_agent.ps1`; sebelumnya di laptop lewat worker) + Claude Sonnet 4.6 di Amazon Bedrock, FastAPI di Lambda, dan tiruan SAP S/4HANA (OData `API_PURCHASEORDER_PROCESS_SRV`). Bukan SageMaker dan bukan SAP BTP.
+- Chatbot Copilot dan Agent Jaringan hanya membaca: jangan menambahkan tool yang mengubah data (PO, hold, persetujuan) ke `copilot/inti.py` atau `copilot/jaringan.py`.
+- Realokasi tidak punya aksi sendiri di backend: dana dipakai saat PO tujuan disetujui, jadi tombolnya membuka draf PO tujuan.
+
+## Sumber data per modul (untuk label di dashboard)
+
+| Modul | Dataset |
+|---|---|
+| Stok, Vs, lead time, ROP, saran PO, Health Score | Bibitor (Kaggle, data edukasi HUB of Analytics) |
+| Cek substitusi / peran komplementer | Instacart Market Basket |
+| Skor risiko stok habis | Model LightGBM pra-latih dari Product Backorders (indikatif) |
+| Uji Runaway PO (rasio 18,5×) | Online Retail II UCI |
+
+## Memakai dokumen ini di Kiro
+
+Simpan rujukan ke dokumen ini di steering Kiro, misalnya file `.kiro/steering/api-dashboard.md` yang berisi `#[[file:docs/api-dashboard.md]]`, atau lampirkan dengan `#File` di chat Kiro. Dengan begitu spec dan kode yang dibuat Kiro mengikuti kontrak ini. Kalau butuh endpoint atau field baru, catat di spec lalu minta ke backend; jangan membuat data tiruan di front-end.

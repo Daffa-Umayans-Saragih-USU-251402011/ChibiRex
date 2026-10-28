@@ -1,0 +1,113 @@
+<#
+Deploy dashboard React ke AWS Amplify (aplikasi rexa-dashboard, cabang main) tanpa sambungan GitHub.
+Alamat API diambil otomatis dari Function URL Lambda, jadi dashboard selalu mengarah ke API yang benar. Kalau Lambda
+Copilot (deploy\deploy_copilot.ps1) sudah ada, chatbot dashboard memakai URL-nya; kalau belum, chatbot menjawab
+cepat dari data saja. Virtual HQ (folder virtual_hq/) ikut di-build dengan alamat yang sama dan dipasang di /hq/,
+dibuka dari tombol "Mode Virtual HQ" di sidebar dashboard.
+
+Prasyarat: Node.js, .venv repo (untuk membuat zip), dan login AWS CLI:  aws login --profile rexa
+Jalankan dari mana saja di dalam repo:
+  powershell -ExecutionPolicy Bypass -File deploy\deploy_dashboard.ps1
+#>
+param(
+    [string]$Profil = "rexa",
+    [string]$Region = "ap-southeast-2",
+    [string]$App = "rexa-dashboard",
+    [string]$Cabang = "main",
+    [string]$Fungsi = "chibirex-api-function",
+    [string]$FungsiCopilot = "rexa-copilot"
+)
+$ErrorActionPreference = "Stop"
+Set-Location (Split-Path -Parent $PSScriptRoot)
+
+function Cek([string]$Langkah) {
+    if ($LASTEXITCODE -ne 0) { throw "Gagal: $Langkah" }
+}
+
+$apiUrl = (aws lambda get-function-url-config --function-name $Fungsi --profile $Profil --region $Region `
+    --query FunctionUrl --output text)
+Cek "membaca URL Lambda. Jalankan dulu: aws login --profile $Profil"
+$apiUrl = $apiUrl.Trim().TrimEnd("/")
+$appId = (aws amplify list-apps --profile $Profil --region $Region --query "apps[?name=='$App'].appId | [0]" --output text).Trim()
+Cek "mencari aplikasi Amplify $App"
+$domain = (aws amplify get-app --app-id $appId --profile $Profil --region $Region --query "app.defaultDomain" --output text).Trim()
+
+$ErrorActionPreference = "Continue"  # Copilot opsional; di PowerShell 5.1, stderr perintah native memicu galat kalau "Stop"
+$copilotUrl = aws lambda get-function-url-config --function-name $FungsiCopilot --profile $Profil --region $Region `
+    --query FunctionUrl --output text 2>$null
+$adaCopilot = ($LASTEXITCODE -eq 0)
+$ErrorActionPreference = "Stop"
+
+$env:VITE_API_URL = $apiUrl
+if ($adaCopilot) { $env:VITE_COPILOT_URL = $copilotUrl.Trim().TrimEnd("/") }
+try {
+    Write-Host "1. Build dashboard (VITE_API_URL=$apiUrl; Copilot AI: $(if ($adaCopilot) { 'ya' } else { 'belum di-deploy' }))"
+    Push-Location dashboard
+    try {
+        npm ci --no-audit --no-fund; Cek "npm ci dashboard"
+        npm run build; Cek "npm run build dashboard"
+    } finally {
+        Pop-Location
+    }
+
+    Write-Host "2. Build Virtual HQ ke dist/hq (alamat API dan Copilot sama dengan dashboard)"
+    Push-Location virtual_hq
+    try {
+        npm ci --no-audit --no-fund; Cek "npm ci virtual_hq"
+        npm run build; Cek "npm run build virtual_hq"
+    } finally {
+        Pop-Location
+    }
+    # Build Virtual HQ memakai path relatif, jadi bisa disajikan dari subfolder /hq/ di domain yang sama.
+    Remove-Item dashboard\dist\hq -Recurse -Force -ErrorAction SilentlyContinue
+    Copy-Item virtual_hq\dist -Destination dashboard\dist\hq -Recurse
+} finally {
+    Remove-Item Env:VITE_API_URL, Env:VITE_COPILOT_URL -ErrorAction SilentlyContinue
+}
+
+Write-Host "3. Kemas dist ke zip"
+# Compress-Archive di PowerShell 5.1 menulis path dengan '\', yang membuat Amplify gagal menyajikan folder assets.
+$zip = Join-Path $env:TEMP "rexa-dashboard.zip"
+& .venv\Scripts\python.exe -I -c @"
+import pathlib, sys, zipfile
+dist = pathlib.Path('dashboard/dist')
+with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as z:
+    for f in dist.rglob('*'):
+        if f.is_file():
+            z.write(f, f.relative_to(dist).as_posix())
+"@ $zip
+Cek "membuat zip"
+
+Write-Host "4. Upload ke Amplify ($App/$Cabang)"
+$dep = aws amplify create-deployment --app-id $appId --branch-name $Cabang --profile $Profil --region $Region `
+    --output json | ConvertFrom-Json
+Cek "create-deployment"
+# Alamat upload (S3) mewajibkan TLS 1.2; Windows PowerShell 5.1 tidak selalu mengaktifkannya di proses baru.
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+for ($coba = 1; ; $coba++) {
+    try {
+        Invoke-WebRequest -Uri $dep.zipUploadUrl -Method Put -InFile $zip -ContentType "application/zip" -UseBasicParsing | Out-Null
+        break
+    } catch {
+        if ($coba -ge 3) {
+            # Job yang dibuat tapi tidak pernah dimulai memblokir deploy berikutnya, jadi batalkan dulu.
+            aws amplify stop-job --app-id $appId --branch-name $Cabang --job-id $dep.jobId --profile $Profil `
+                --region $Region --output text | Out-Null
+            throw "Gagal upload zip ke Amplify: $($_.Exception.Message)"
+        }
+        Write-Host "   Upload gagal ($($_.Exception.Message)); coba lagi ($coba/3)..."
+        Start-Sleep -Seconds 3
+    }
+}
+aws amplify start-deployment --app-id $appId --branch-name $Cabang --job-id $dep.jobId --profile $Profil `
+    --region $Region --query "jobSummary.status" --output text
+Cek "start-deployment"
+
+do {
+    Start-Sleep -Seconds 3
+    $status = (aws amplify get-job --app-id $appId --branch-name $Cabang --job-id $dep.jobId --profile $Profil `
+        --region $Region --query "job.summary.status" --output text).Trim()
+} while ($status -in @("PENDING", "PROVISIONING", "RUNNING"))
+Remove-Item $zip -ErrorAction SilentlyContinue
+if ($status -ne "SUCCEED") { throw "Deploy Amplify berstatus $status" }
+Write-Host "Selesai: https://$Cabang.$domain (Virtual HQ: https://$Cabang.$domain/hq/index.html)"
